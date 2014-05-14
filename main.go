@@ -1,73 +1,53 @@
 package main
 
 import (
+	"crypto/md5"
 	"fmt"
-	"sync"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"sort"
 )
 
-func gen(nums ...int) <-chan int {
-	out := make(chan int)
-	go func() {
-		for _, n := range nums {
-			out <- n
+// MD5All reads all the files in the file tree rooted at root and returns a map
+// from file path to the MD5 sum of the file's contents.  If the directory walk
+// fails or any read operation fails, MD5All returns an error.
+func MD5All(root string) (map[string][md5.Size]byte, error) {
+	m := make(map[string][md5.Size]byte)
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error { // HL
+		if err != nil {
+			return err
 		}
-	close(out)
-	}()
-	return out
-}
-
-func sq(done <-chan struct{}, in <-chan int) <-chan int {
-	out := make(chan int)
-	go func() {
-		defer close(out)
-		for n := range in {
-			select {
-			case out <- n * n:
-			case <-done:
-				return
-			}
+		if info.IsDir() {
+			return nil
 		}
-	}()
-	return out
-}
-
-func merge(done <-chan struct{}, chans ...<-chan int) <-chan int {
-	var wg sync.WaitGroup
-	out := make(chan int)
-
-	output := func(c <-chan int) {
-		defer wg.Done()
-		for n := range c {
-			select {
-			case out <- n:
-			case <-done:
-				return
-			}
+		data, err := ioutil.ReadFile(path) // HL
+		if err != nil {
+			return err
 		}
+		m[path] = md5.Sum(data) // HL
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	wg.Add(len(chans))
-	for _, c := range chans {
-		go output(c)
-	}
-
-	go func() {
-		wg.Wait()
-		close(out)
-	}()
-
-	return out
+	return m, nil
 }
 
 func main() {
-	done := make(chan struct{})
-	defer close(done)
-
-	in := gen(2, 3)
-
-	c1 := sq(done, in)
-	c2 := sq(done, in)
-
-	out :=  merge(done, c1, c2)
-	fmt.Println(<-out)
+	// Calculate the MD5 sum of all files under the specified directory,
+	// then print the results sorted by path name.
+	m, err := MD5All(os.Args[1]) // HL
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	var paths []string
+	for path := range m {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths) // HL
+	for _, path := range paths {
+		fmt.Printf("%x  %s\n", m[path], path)
+	}
 }
