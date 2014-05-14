@@ -16,26 +16,34 @@ func gen(nums ...int) <-chan int {
 	return out
 }
 
-func sq(in <-chan int) <-chan int {
+func sq(done <-chan struct{}, in <-chan int) <-chan int {
 	out := make(chan int)
 	go func() {
+		defer close(out)
 		for n := range in {
-			out <- n * n
+			select {
+			case out <- n * n:
+			case <-done:
+				return
+			}
 		}
-		close(out)
 	}()
 	return out
 }
 
-func merge(chans ...<-chan int) <-chan int {
+func merge(done <-chan struct{}, chans ...<-chan int) <-chan int {
 	var wg sync.WaitGroup
 	out := make(chan int)
 
 	output := func(c <-chan int) {
+		defer wg.Done()
 		for n := range c {
-			out <- n
+			select {
+			case out <- n:
+			case <-done:
+				return
+			}
 		}
-		wg.Done()
 	}
 
 	wg.Add(len(chans))
@@ -52,12 +60,14 @@ func merge(chans ...<-chan int) <-chan int {
 }
 
 func main() {
+	done := make(chan struct{})
+	defer close(done)
+
 	in := gen(2, 3)
 
-	c1 := sq(in)
-	c2 := sq(in)
+	c1 := sq(done, in)
+	c2 := sq(done, in)
 
-	for n := range merge(c1, c2) {
-		fmt.Println(n)
-	}
+	out :=  merge(done, c1, c2)
+	fmt.Println(<-out)
 }
